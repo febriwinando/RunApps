@@ -52,7 +52,9 @@
             android:layout_width="60dp"
             android:layout_height="60dp"
             android:src="@drawable/ic_launcher_background"
-            android:background="@drawable/ic_launcher_background" />
+            android:background="@drawable/bg_round_white" />
+
+
     </LinearLayout>
 
 
@@ -62,13 +64,21 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         android:layout_height="wrap_content">
-        <EditText
+<!--        <EditText-->
+<!--            android:id="@+id/etSearch"-->
+<!--            android:layout_width="match_parent"-->
+<!--            android:layout_height="50dp"-->
+<!--            android:hint="Cari lokasi..."-->
+<!--            android:background="@drawable/ic_launcher_background"-->
+<!--            android:padding="10dp"-->
+<!--            android:layout_margin="10dp"/>-->
+        <AutoCompleteTextView
             android:id="@+id/etSearch"
             android:layout_width="match_parent"
             android:layout_height="50dp"
             android:hint="Cari lokasi..."
-            android:background="@drawable/ic_launcher_background"
             android:padding="10dp"
+            android:background="@drawable/bg_round_white"
             android:layout_margin="10dp"/>
 
         <Button

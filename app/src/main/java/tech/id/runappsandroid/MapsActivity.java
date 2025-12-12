@@ -9,7 +9,9 @@ import android.location.Location;
 import android.os.Bundle;
 import android.os.Looper;
 import android.util.Log;
+import android.widget.AutoCompleteTextView;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -23,8 +25,21 @@ import com.google.android.gms.location.*;
 import com.google.android.gms.maps.*;
 import com.google.android.gms.maps.model.*;
 import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.libraries.places.api.Places;
+import com.google.android.libraries.places.api.model.Place;
+import com.google.android.libraries.places.api.model.AutocompletePrediction;
+import com.google.android.libraries.places.api.model.AutocompleteSessionToken;
+import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest;
+import com.google.android.libraries.places.api.net.FindAutocompletePredictionsResponse;
+import com.google.android.libraries.places.api.net.FetchPlaceRequest;
+import com.google.android.libraries.places.api.net.PlacesClient;
+import com.google.android.libraries.places.api.net.FetchPlaceRequest;
+import com.google.android.libraries.places.api.net.PlacesClient;
+
+
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -61,12 +76,19 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private boolean followUser = true;
 
     ImageButton btnCenter;
-    EditText etSearch;
+    AutoCompleteTextView etSearch;
     Button btnSearch;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_maps);
+
+        if (!Places.isInitialized()) {
+            Places.initialize(this, API_KEY);
+        }
+
+
         tvStatus = findViewById(R.id.tvStatus);
         tvDistance = findViewById(R.id.tvDistance);
         tvDuration = findViewById(R.id.tvDuration);
@@ -106,7 +128,113 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             }
         });
 
+        etSearch = findViewById(R.id.etSearch);
+        btnSearch = findViewById(R.id.btnSearch);
+
+//        btnSearch.setOnClickListener(v -> searchLocation());
+
+        PlacesClient placesClient = Places.createClient(this);
+
+        PlacesAutoCompleteAdapter adapter =
+                new PlacesAutoCompleteAdapter(this, placesClient);
+
+        etSearch.setAdapter(adapter);
+        etSearch.setThreshold(1);
+
+
+        etSearch.setOnItemClickListener((parent, view, position, id) -> {
+
+            AutocompletePrediction item = adapter.getItem(position);
+            String placeId = item.getPlaceId();
+
+            List<Place.Field> fields = Arrays.asList(
+                    Place.Field.ID,
+                    Place.Field.NAME,
+                    Place.Field.LAT_LNG
+            );
+
+            FetchPlaceRequest request =
+                    FetchPlaceRequest.builder(placeId, fields).build();
+
+            placesClient.fetchPlace(request)
+                    .addOnSuccessListener(response -> {
+
+                        Place place = response.getPlace();
+                        LatLng newDest = place.getLatLng();   // tidak merah
+                        String name = place.getName();        // tidak merah
+
+                        destinationLatLng = newDest;
+
+                        mMap.addMarker(new MarkerOptions()
+                                .position(newDest)
+                                .title(name));
+
+                        mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(newDest, 16));
+
+                        if (previousLatLng != null)
+                            fetchDirection(previousLatLng, destinationLatLng);
+
+                    })
+                    .addOnFailureListener(e ->
+                            Toast.makeText(this, "Gagal mengambil lokasi", Toast.LENGTH_SHORT).show());
+        });
+
+
     }
+
+    private void searchLocation() {
+        String query = etSearch.getText().toString().trim();
+
+        if (query.isEmpty()) {
+            Toast.makeText(this, "Masukkan lokasi", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        try {
+            List<Address> addresses = geocoder.getFromLocationName(query, 1);
+            if (addresses == null || addresses.size() == 0) {
+                Toast.makeText(this, "Lokasi tidak ditemukan", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            Address addr = addresses.get(0);
+            LatLng foundLatLng = new LatLng(addr.getLatitude(), addr.getLongitude());
+
+            // Simpan sebagai tujuan baru
+            destinationLatLng = foundLatLng;
+
+            // Hapus marker tujuan sebelumnya
+            mMap.clear();
+
+            // Tambah marker user kembali
+            if (userLocationMarker != null) {
+                userLocationMarker = mMap.addMarker(new MarkerOptions()
+                        .position(userLocationMarker.getPosition())
+                        .icon(BitmapDescriptorFactory.fromResource(R.drawable.delivery))
+                        .anchor(0.5f, 0.5f));
+            }
+
+            // Tambah marker tujuan baru
+            mMap.addMarker(new MarkerOptions()
+                    .position(destinationLatLng)
+                    .title("Tujuan baru"));
+
+            // Zoom ke tujuan
+            mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(destinationLatLng, 15));
+
+            // Ambil route dari posisi user saat ini
+            if (previousLatLng != null) {
+                fetchDirection(previousLatLng, destinationLatLng);
+            }
+
+            Toast.makeText(this, "Tujuan diperbarui", Toast.LENGTH_SHORT).show();
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Geocoder error", Toast.LENGTH_SHORT).show();
+        }
+    }
+
 
     // Location callback
     private final LocationCallback locationCallback = new LocationCallback() {
