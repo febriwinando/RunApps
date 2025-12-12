@@ -9,6 +9,8 @@ import android.location.Location;
 import android.os.Bundle;
 import android.os.Looper;
 import android.util.Log;
+import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -28,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 import retrofit2.*;
 import retrofit2.converter.gson.GsonConverterFactory;
+
 
 public class MapsActivity extends FragmentActivity implements OnMapReadyCallback {
 
@@ -55,7 +58,11 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
     // UI overlay
     private TextView tvStatus, tvDistance, tvDuration;
+    private boolean followUser = true;
 
+    ImageButton btnCenter;
+    EditText etSearch;
+    Button btnSearch;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -63,6 +70,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         tvStatus = findViewById(R.id.tvStatus);
         tvDistance = findViewById(R.id.tvDistance);
         tvDuration = findViewById(R.id.tvDuration);
+        btnCenter = findViewById(R.id.btnCenter);
 
         geocoder = new Geocoder(this);
         fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
@@ -72,13 +80,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         locationRequest = new LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
                 3000 // interval (ms)
-        ).setMinUpdateIntervalMillis(2000)      // fastest interval
+        ).setMinUpdateIntervalMillis(3000)      // fastest interval
                 .setMaxUpdateDelayMillis(0)            // no batching
                 .build();
-
-//        locationRequest.setInterval(1500);
-//        locationRequest.setFastestInterval(1000);
-//        locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
 
         // Retrofit init
         Retrofit retrofit = new Retrofit.Builder()
@@ -93,6 +97,15 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
+
+        btnCenter.setOnClickListener(v -> {
+            followUser = true;
+            if (userLocationMarker != null) {
+                mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(
+                        userLocationMarker.getPosition(), 16));
+            }
+        });
+
     }
 
     // Location callback
@@ -119,6 +132,13 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)));
         }
 
+        mMap.setOnCameraMoveStartedListener(reason -> {
+            if (reason == GoogleMap.OnCameraMoveStartedListener.REASON_GESTURE) {
+                followUser = false;
+            }
+        });
+
+
         // check permission & zoom user location
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             enableAndZoomToUser();
@@ -129,15 +149,31 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     }
 
     // enable my-location layer and move camera to last known location
-    private void enableAndZoomToUser() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
-        mMap.setMyLocationEnabled(false); // we use custom marker, set false to avoid default blue dot
+//    private void enableAndZoomToUser() {
+//        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+//        mMap.setMyLocationEnabled(false); // we use custom marker, set false to avoid default blue dot
+//
+//        fusedLocationProviderClient.getLastLocation().addOnSuccessListener(this, (OnSuccessListener<Location>) location -> {
+//            if (location != null) {
+//                LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
+//                mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16));
+//            }
+//        });
+//    }
 
-        fusedLocationProviderClient.getLastLocation().addOnSuccessListener(this, (OnSuccessListener<Location>) location -> {
-            if (location != null) {
-                LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
-                mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16));
+    private void enableAndZoomToUser() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) return;
+
+        fusedLocationProviderClient.getLastLocation().addOnSuccessListener(location -> {
+
+            if (location == null) {
+                Log.w(TAG, "getLastLocation NULL. Waiting for updates...");
+                return;
             }
+
+            LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
+            mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16));
         });
     }
 
@@ -151,46 +187,98 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         fusedLocationProviderClient.removeLocationUpdates(locationCallback);
         tvStatus.setText("Tracking stopped");
     }
+    private LatLng previousLatLng = null;
+
+    private float computeBearing(LatLng from, LatLng to) {
+        double lat1 = Math.toRadians(from.latitude);
+        double lon1 = Math.toRadians(from.longitude);
+        double lat2 = Math.toRadians(to.latitude);
+        double lon2 = Math.toRadians(to.longitude);
+
+        double dLon = lon2 - lon1;
+        double y = Math.sin(dLon) * Math.cos(lat2);
+        double x = Math.cos(lat1)*Math.sin(lat2) - Math.sin(lat1)*Math.cos(lat2)*Math.cos(dLon);
+
+        double bearing = Math.toDegrees(Math.atan2(y, x));
+        return (float)((bearing + 360) % 360);
+    }
+
 
     private void setUserLocationMarker(Location location) {
+
+        if (location == null) {
+            Log.w(TAG, "Location is NULL!");
+            return;
+        }
+
         LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
 
+        // ===== FOLLOW CAMERA =====
+        if (followUser) {
+            mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16));
+        }
+
+        // ===== BEARING (PERGERAKAN MENGHADAP DEPAN) =====
+        float bearing = 0f;
+        if (previousLatLng != null) {
+            bearing = computeBearing(previousLatLng, latLng);
+        }
+        previousLatLng = latLng;
+
+        // ===== BUAT MARKER JIKA BELUM ADA =====
         if (userLocationMarker == null) {
+
             MarkerOptions markerOptions = new MarkerOptions()
                     .position(latLng)
-                    .icon(BitmapDescriptorFactory.fromResource(R.drawable.delivery)) // pakai icon delivery Anda
+                    .icon(BitmapDescriptorFactory.fromResource(R.drawable.delivery))
                     .anchor(0.5f, 0.5f)
-                    .rotation(location.getBearing());
+                    .rotation(bearing);
+
             userLocationMarker = mMap.addMarker(markerOptions);
-            mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16));
+
+
         } else {
-            // smooth-ish update: setPosition + rotation
+
+            // update posisi & rotasi
             userLocationMarker.setPosition(latLng);
-            userLocationMarker.setRotation(location.getBearing());
-            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16));
+            userLocationMarker.setRotation(bearing);
         }
 
-        // update direction dengan throttling (time + distance)
-        if (destinationLatLng != null) {
-            long now = System.currentTimeMillis();
 
-            boolean timeOk = (now - lastDirectionUpdateTime) > DIRECTION_UPDATE_INTERVAL_MS;
-            boolean distOk = true;
-            if (lastDirectionOrigin != null) {
-                float[] results = new float[1];
-                android.location.Location.distanceBetween(
-                        lastDirectionOrigin.latitude, lastDirectionOrigin.longitude,
-                        latLng.latitude, latLng.longitude, results);
-                distOk = results[0] >= DIRECTION_UPDATE_DISTANCE_M;
-            }
+        // ===== FOLLOW CAMERA ARAH DEPAN USER =====
+        if (followUser) {
+            CameraPosition cameraPosition = new CameraPosition.Builder()
+                    .target(latLng)
+                    .zoom(17f)
+                    .bearing(bearing)   // maps menghadap arah depan user
+                    .tilt(60f)          // sudut 3D seperti Google Maps
+                    .build();
 
-            if (lastDirectionOrigin == null || (timeOk && distOk)) {
-                lastDirectionUpdateTime = now;
-                lastDirectionOrigin = latLng;
-                fetchDirection(latLng, destinationLatLng);
-            }
+            mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
+        }
+
+
+        // ===== UPDATE DIRECTIONS (THROTTLING) =====
+        long now = System.currentTimeMillis();
+        boolean timeOk = (now - lastDirectionUpdateTime) > DIRECTION_UPDATE_INTERVAL_MS;
+
+        boolean distOk = true;
+        if (lastDirectionOrigin != null) {
+            float[] results = new float[1];
+            Location.distanceBetween(
+                    lastDirectionOrigin.latitude, lastDirectionOrigin.longitude,
+                    latLng.latitude, latLng.longitude, results
+            );
+            distOk = results[0] >= DIRECTION_UPDATE_DISTANCE_M;
+        }
+
+        if (destinationLatLng != null && (lastDirectionOrigin == null || (timeOk && distOk))) {
+            lastDirectionUpdateTime = now;
+            lastDirectionOrigin = latLng;
+            fetchDirection(latLng, destinationLatLng);
         }
     }
+
 
     // fetch direction from Google Directions API and draw polyline + update UI
     private void fetchDirection(LatLng origin, LatLng destination) {
